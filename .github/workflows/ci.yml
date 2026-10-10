@@ -1,0 +1,49 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build-test-pack:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-dotnet@v4
+        with:
+          global-json-file: global.json
+
+      - name: Restore
+        run: dotnet restore CodeForge.slnx
+
+      - name: Build (warnings are errors)
+        run: dotnet build CodeForge.slnx -c Release --no-restore
+
+      - name: Test
+        run: dotnet test --solution CodeForge.slnx -c Release --no-build
+
+      - name: Pack
+        run: dotnet pack src/CodeForge -c Release --no-build -o artifacts
+
+      - name: Consume the packed package
+        run: bash scripts/consumer-smoke.sh artifacts
+
+      - name: Vulnerable packages (direct and transitive)
+        run: |
+          dotnet list CodeForge.slnx package --vulnerable --include-transitive 2>&1 | tee vulnerabilities.txt
+          if grep -q "has the following vulnerable packages" vulnerabilities.txt; then echo "::error::vulnerable packages found"; exit 1; fi
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: CodeForge-nupkg
+          path: artifacts/*.nupkg
